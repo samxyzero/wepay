@@ -1,0 +1,267 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+    output   = "../generated/prisma"
+}
+
+datasource db {
+    provider  = "postgresql"
+    // NOTE: When using mysql or sqlserver, uncomment the @db.Text annotations in model Account below
+    // Further reading:
+    // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
+    // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
+    url       = env("POSTGRES_PRISMA_URL")
+    directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model Post {
+    id        Int      @id @default(autoincrement())
+    name      String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    createdBy   User   @relation(fields: [createdById], references: [id])
+    createdById String
+
+    @@index([name])
+}
+
+enum GroupType {
+    HOME
+    TRIP
+    FRIENDS
+    OFFICE
+    FAMILY
+    CLUB
+    OTHER
+}
+
+enum GroupRole {
+    ADMIN
+    MEMBER
+}
+
+enum SplitType {
+    EQUAL
+    CUSTOM
+}
+
+enum PaymentSource {
+    PERSONAL
+    WALLET
+}
+
+enum ExpenseCategory {
+    GROCERIES
+    RENT
+    ELECTRICITY
+    INTERNET
+    CLEANING
+    TRANSPORT
+    DINING
+    TRIP
+    MAINTENANCE
+    OTHER
+}
+
+enum WalletEntryType {
+    CONTRIBUTION
+    EXPENSE
+    ADJUSTMENT
+    WITHDRAWAL
+}
+
+enum LedgerEntryType {
+    EXPENSE_PERSONAL
+    EXPENSE_WALLET
+    WALLET_CONTRIBUTION
+    SETTLEMENT_PAYMENT
+    WALLET_ADJUSTMENT
+    EXPENSE_EDIT_LOG
+    EXPENSE_DELETE_LOG
+}
+
+model Group {
+    id          String        @id @default(cuid())
+    name        String
+    description String?
+    type        GroupType     @default(OTHER)
+    currency    String        @default("USD")
+    createdAt   DateTime      @default(now())
+    updatedAt   DateTime      @updatedAt
+    members     GroupMember[]
+    expenses    Expense[]
+    settlements Settlement[]
+    wallet      WalletEntry[]
+    ledger      LedgerEntry[]
+
+    @@index([name])
+    @@index([createdAt])
+}
+
+model GroupMember {
+    id                  String               @id @default(cuid())
+    groupId             String
+    group               Group                @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    userId              String?
+    user                User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+    name                String
+    email               String?
+    phone               String?
+    image               String?
+    role                GroupRole            @default(MEMBER)
+    joinedAt            DateTime             @default(now())
+    paidExpenses        Expense[]            @relation("PaidExpenses")
+    createdExpenses     Expense[]            @relation("CreatedExpenses")
+    splits              ExpenseParticipant[]
+    walletEntries       WalletEntry[]        @relation("WalletActor")
+    settlementsPaid     Settlement[]         @relation("SettlementPayer")
+    settlementsReceived Settlement[]         @relation("SettlementReceiver")
+    ledgerActions       LedgerEntry[]        @relation("LedgerActor")
+
+    @@index([groupId])
+    @@index([userId])
+}
+
+model Expense {
+    id                String               @id @default(cuid())
+    groupId           String
+    group             Group                @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    title             String
+    notes             String?
+    amount            Decimal              @db.Decimal(14, 2)
+    date              DateTime
+    category          ExpenseCategory      @default(OTHER)
+    splitType         SplitType            @default(EQUAL)
+    paymentSource     PaymentSource        @default(PERSONAL)
+    receiptImageUrl   String?
+    paidByMemberId    String?
+    paidByMember      GroupMember?         @relation("PaidExpenses", fields: [paidByMemberId], references: [id], onDelete: SetNull)
+    createdByMemberId String?
+    createdByMember   GroupMember?         @relation("CreatedExpenses", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+    participants      ExpenseParticipant[]
+    walletEntry       WalletEntry?
+    createdAt         DateTime             @default(now())
+    updatedAt         DateTime             @updatedAt
+
+    @@index([groupId, date])
+    @@index([paidByMemberId])
+    @@index([paymentSource])
+}
+
+model ExpenseParticipant {
+    id        String      @id @default(cuid())
+    expenseId String
+    expense   Expense     @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+    memberId  String
+    member    GroupMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+    share     Decimal     @db.Decimal(14, 2)
+
+    @@unique([expenseId, memberId])
+    @@index([memberId])
+}
+
+model WalletEntry {
+    id        String          @id @default(cuid())
+    groupId   String
+    group     Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    memberId  String?
+    member    GroupMember?    @relation("WalletActor", fields: [memberId], references: [id], onDelete: SetNull)
+    expenseId String?         @unique
+    expense   Expense?        @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+    type      WalletEntryType
+    amount    Decimal         @db.Decimal(14, 2)
+    note      String?
+    date      DateTime
+    createdAt DateTime        @default(now())
+
+    @@index([groupId, date])
+    @@index([memberId])
+}
+
+model Settlement {
+    id               String      @id @default(cuid())
+    groupId          String
+    group            Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    payerMemberId    String
+    payerMember      GroupMember @relation("SettlementPayer", fields: [payerMemberId], references: [id], onDelete: Cascade)
+    receiverMemberId String
+    receiverMember   GroupMember @relation("SettlementReceiver", fields: [receiverMemberId], references: [id], onDelete: Cascade)
+    amount           Decimal     @db.Decimal(14, 2)
+    note             String?
+    date             DateTime
+    createdAt        DateTime    @default(now())
+
+    @@index([groupId, date])
+    @@index([payerMemberId])
+    @@index([receiverMemberId])
+}
+
+model LedgerEntry {
+    id            String          @id @default(cuid())
+    groupId       String
+    group         Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+    type          LedgerEntryType
+    actorMemberId String?
+    actorMember   GroupMember?    @relation("LedgerActor", fields: [actorMemberId], references: [id], onDelete: SetNull)
+    amount        Decimal?        @db.Decimal(14, 2)
+    note          String?
+    referenceType String?
+    referenceId   String?
+    metadata      Json?
+    createdAt     DateTime        @default(now())
+
+    @@index([groupId, createdAt])
+    @@index([actorMemberId])
+    @@index([type])
+}
+
+// Necessary for Next auth
+model Account {
+    id                       String  @id @default(cuid())
+    userId                   String
+    type                     String
+    provider                 String
+    providerAccountId        String
+    refresh_token            String? // @db.Text
+    access_token             String? // @db.Text
+    expires_at               Int?
+    token_type               String?
+    scope                    String?
+    id_token                 String? // @db.Text
+    session_state            String?
+    user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    refresh_token_expires_in Int?
+
+    @@unique([provider, providerAccountId])
+}
+
+model Session {
+    id           String   @id @default(cuid())
+    sessionToken String   @unique
+    userId       String
+    expires      DateTime
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+    id            String        @id @default(cuid())
+    name          String?
+    email         String?       @unique
+    emailVerified DateTime?
+    image         String?
+    accounts      Account[]
+    sessions      Session[]
+    posts         Post[]
+    memberships   GroupMember[]
+}
+
+model VerificationToken {
+    identifier String
+    token      String   @unique
+    expires    DateTime
+
+    @@unique([identifier, token])
+}

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { requireGroupMembership } from "~/server/lib/group-access";
+import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import {
   buildRangeSummary,
   buildSettlementSuggestions,
@@ -27,7 +28,7 @@ const categoryEnum = z.enum([
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 export const financeRouter = createTRPCRouter({
-  addExpense: publicProcedure
+  addExpense: protectedProcedure
     .input(
       z
         .object({
@@ -83,6 +84,7 @@ export const financeRouter = createTRPCRouter({
         }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       const amount = round2(input.amount);
 
       const participants =
@@ -174,7 +176,7 @@ export const financeRouter = createTRPCRouter({
       return expense;
     }),
 
-  addWalletContribution: publicProcedure
+  addWalletContribution: protectedProcedure
     .input(
       z.object({
         groupId: z.string().cuid(),
@@ -185,6 +187,7 @@ export const financeRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       const amount = round2(input.amount);
       return ctx.db.$transaction(async (tx) => {
         const entry = await tx.walletEntry.create({
@@ -214,7 +217,7 @@ export const financeRouter = createTRPCRouter({
       });
     }),
 
-  addWalletAdjustment: publicProcedure
+  addWalletAdjustment: protectedProcedure
     .input(
       z.object({
         groupId: z.string().cuid(),
@@ -225,6 +228,7 @@ export const financeRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       const amount = round2(input.amount);
       return ctx.db.$transaction(async (tx) => {
         const entry = await tx.walletEntry.create({
@@ -254,7 +258,7 @@ export const financeRouter = createTRPCRouter({
       });
     }),
 
-  addSettlement: publicProcedure
+  addSettlement: protectedProcedure
     .input(
       z.object({
         groupId: z.string().cuid(),
@@ -266,6 +270,7 @@ export const financeRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       if (input.payerMemberId === input.receiverMemberId) {
         throw new Error("Payer and receiver cannot be the same member.");
       }
@@ -302,9 +307,10 @@ export const financeRouter = createTRPCRouter({
       });
     }),
 
-  dashboard: publicProcedure
+  dashboard: protectedProcedure
     .input(z.object({ groupId: z.string().cuid() }))
     .query(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       const group = await ctx.db.group.findUnique({
         where: { id: input.groupId },
         include: {
@@ -345,7 +351,7 @@ export const financeRouter = createTRPCRouter({
       };
     }),
 
-  walletLedger: publicProcedure
+  walletLedger: protectedProcedure
     .input(
       z.object({
         groupId: z.string().cuid(),
@@ -353,6 +359,7 @@ export const financeRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       const entries = await ctx.db.walletEntry.findMany({
         where: { groupId: input.groupId },
         include: { member: true, expense: true },
@@ -377,7 +384,7 @@ export const financeRouter = createTRPCRouter({
       return withBalances.reverse();
     }),
 
-  report: publicProcedure
+  report: protectedProcedure
     .input(
       z.object({
         groupId: z.string().cuid(),
@@ -387,6 +394,7 @@ export const financeRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
       const current = getDateRange(input.range, input.startDate, input.endDate);
       const previous = getPreviousRange(current.start, current.end);
 

@@ -3,7 +3,7 @@ import "~/styles/globals.css";
 import { type Metadata } from "next";
 import { Sora, Space_Grotesk } from "next/font/google";
 
-import { TRPCReactProvider } from "~/trpc/react";
+import { AppProviders } from "~/app/providers";
 
 export const metadata: Metadata = {
   title: "Wepay Shared Wallet",
@@ -28,7 +28,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${sora.variable} ${spaceGrotesk.variable}`}>
       <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );

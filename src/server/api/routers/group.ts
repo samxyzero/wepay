@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
+import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
+import {
+  generateUniqueJoinCode,
+  requireGroupMembership,
+} from "~/server/lib/group-access";
 import { computeGroupBalances } from "~/server/lib/ledger";
 
 const groupTypeEnum = z.enum([
@@ -13,22 +17,19 @@ const groupTypeEnum = z.enum([
   "OTHER",
 ]);
 
-const roleEnum = z.enum(["ADMIN", "MEMBER"]);
-
 export const groupRouter = createTRPCRouter({
-  create: publicProcedure
+  create: protectedProcedure
     .input(
       z.object({
         name: z.string().min(2).max(60),
         description: z.string().max(240).optional(),
         type: groupTypeEnum.default("OTHER"),
         currency: z.string().length(3).default("USD"),
-        creatorName: z.string().min(2).max(60),
-        creatorEmail: z.string().email().optional(),
-        creatorPhone: z.string().max(30).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const joinCode = await generateUniqueJoinCode(ctx.db);
+
       return ctx.db.$transaction(async (tx) => {
         const group = await tx.group.create({
           data: {
@@ -36,15 +37,17 @@ export const groupRouter = createTRPCRouter({
             description: input.description,
             type: input.type,
             currency: input.currency.toUpperCase(),
+            joinCode,
           },
         });
 
         const creator = await tx.groupMember.create({
           data: {
             groupId: group.id,
-            name: input.creatorName,
-            email: input.creatorEmail,
-            phone: input.creatorPhone,
+            userId: ctx.session.user.id,
+            name: ctx.session.user.name ?? "Member",
+            email: ctx.session.user.email,
+            image: ctx.session.user.image,
             role: "ADMIN",
           },
         });
@@ -67,8 +70,15 @@ export const groupRouter = createTRPCRouter({
       });
     }),
 
-  list: publicProcedure.query(async ({ ctx }) => {
+  list: protectedProcedure.query(async ({ ctx }) => {
     const groups = await ctx.db.group.findMany({
+      where: {
+        members: {
+          some: {
+            userId: ctx.session.user.id,
+          },
+        },
+      },
       orderBy: { updatedAt: "desc" },
       include: {
         members: true,
@@ -108,11 +118,18 @@ export const groupRouter = createTRPCRouter({
     });
   }),
 
-  details: publicProcedure
+  details: protectedProcedure
     .input(z.object({ groupId: z.string().cuid() }))
     .query(async ({ ctx, input }) => {
-      const group = await ctx.db.group.findUnique({
-        where: { id: input.groupId },
+      const group = await ctx.db.group.findFirst({
+        where: {
+          id: input.groupId,
+          members: {
+            some: {
+              userId: ctx.session.user.id,
+            },
+          },
+        },
         include: {
           members: {
             orderBy: [{ role: "asc" }, { name: "asc" }],
@@ -132,39 +149,70 @@ export const groupRouter = createTRPCRouter({
       };
     }),
 
-  addMember: publicProcedure
+  joinByCode: protectedProcedure
     .input(
       z.object({
-        groupId: z.string().cuid(),
-        name: z.string().min(2).max(60),
-        email: z.string().email().optional(),
-        phone: z.string().max(30).optional(),
-        role: roleEnum.default("MEMBER"),
-        actorMemberId: z.string().cuid().optional(),
+        code: z
+          .string()
+          .trim()
+          .min(6)
+          .max(6)
+          .regex(/^[A-Z0-9]{6}$/),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const group = await ctx.db.group.findUnique({
+        where: { joinCode: input.code.toUpperCase() },
+      });
+
+      if (!group) {
+        throw new Error("Invalid group code");
+      }
+
+      const existing = await ctx.db.groupMember.findFirst({
+        where: {
+          groupId: group.id,
+          userId: ctx.session.user.id,
+        },
+      });
+
+      if (existing) {
+        return { groupId: group.id, alreadyMember: true };
+      }
+
       const member = await ctx.db.groupMember.create({
         data: {
-          groupId: input.groupId,
-          name: input.name,
-          email: input.email,
-          phone: input.phone,
-          role: input.role,
+          groupId: group.id,
+          userId: ctx.session.user.id,
+          name: ctx.session.user.name ?? "Member",
+          email: ctx.session.user.email,
+          image: ctx.session.user.image,
+          role: "MEMBER",
         },
       });
 
       await ctx.db.ledgerEntry.create({
         data: {
-          groupId: input.groupId,
+          groupId: group.id,
           type: "WALLET_ADJUSTMENT",
-          actorMemberId: input.actorMemberId,
+          actorMemberId: member.id,
           note: `${member.name} joined the group`,
           referenceType: "member",
           referenceId: member.id,
         },
       });
 
-      return member;
+      return { groupId: group.id, alreadyMember: false };
+    }),
+
+  myMemberId: protectedProcedure
+    .input(z.object({ groupId: z.string().cuid() }))
+    .query(async ({ ctx, input }) => {
+      const member = await requireGroupMembership(
+        ctx.db,
+        ctx.session.user.id,
+        input.groupId,
+      );
+      return { memberId: member.id, role: member.role };
     }),
 });

@@ -85,6 +85,7 @@ enum LedgerEntryType {
 
 model Group {
     id          String        @id @default(cuid())
+    joinCode    String?       @unique @db.VarChar(6)
     name        String
     description String?
     type        GroupType     @default(OTHER)
@@ -121,6 +122,7 @@ model GroupMember {
     settlementsReceived Settlement[]         @relation("SettlementReceiver")
     ledgerActions       LedgerEntry[]        @relation("LedgerActor")
 
+    @@unique([groupId, userId])
     @@index([groupId])
     @@index([userId])
 }
@@ -250,6 +252,7 @@ model User {
     id            String        @id @default(cuid())
     name          String?
     email         String?       @unique
+    passwordHash  String?
     emailVerified DateTime?
     image         String?
     accounts      Account[]

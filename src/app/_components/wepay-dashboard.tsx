@@ -74,6 +74,8 @@ const expenseCategories = [
 
 type GroupType = (typeof groupTypes)[number];
 type ExpenseCategory = (typeof expenseCategories)[number];
+type DashboardTab = "overview" | "records" | "history";
+type PeriodRange = "week" | "month" | "custom";
 
 function FeedbackBanner({
   feedback,
@@ -136,8 +138,17 @@ export function WepayDashboard() {
   const [participants, setParticipants] = useState<string[]>([]);
   const [fundAmount, setFundAmount] = useState("");
   const [fundNote, setFundNote] = useState("");
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>("overview");
+  const [historyRange, setHistoryRange] = useState<PeriodRange>("month");
+  const [historyStartDate, setHistoryStartDate] = useState(() => {
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    return start.toISOString().slice(0, 10);
+  });
+  const [historyEndDate, setHistoryEndDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
   const [settleForm, setSettleForm] = useState({
-    payerMemberId: "",
     receiverMemberId: "",
     amount: "",
     note: "",
@@ -155,6 +166,51 @@ export function WepayDashboard() {
   const dashboard = api.finance.dashboard.useQuery(
     { groupId: activeGroupId ?? "" },
     { enabled: isAuthed && Boolean(activeGroupId) },
+  );
+
+  const reportQuery = api.finance.report.useQuery(
+    {
+      groupId: activeGroupId ?? "",
+      range: historyRange,
+      startDate:
+        historyRange === "custom"
+          ? new Date(`${historyStartDate}T00:00:00`)
+          : undefined,
+      endDate:
+        historyRange === "custom"
+          ? (() => {
+              const end = new Date(`${historyEndDate}T00:00:00`);
+              end.setDate(end.getDate() + 1);
+              return end;
+            })()
+          : undefined,
+    },
+    {
+      enabled: isAuthed && Boolean(activeGroupId),
+    },
+  );
+
+  const historyQuery = api.finance.history.useQuery(
+    {
+      groupId: activeGroupId ?? "",
+      range: historyRange,
+      startDate:
+        historyRange === "custom"
+          ? new Date(`${historyStartDate}T00:00:00`)
+          : undefined,
+      endDate:
+        historyRange === "custom"
+          ? (() => {
+              const end = new Date(`${historyEndDate}T00:00:00`);
+              end.setDate(end.getDate() + 1);
+              return end;
+            })()
+          : undefined,
+      take: 150,
+    },
+    {
+      enabled: isAuthed && Boolean(activeGroupId),
+    },
   );
 
   const myMember = api.group.myMemberId.useQuery(
@@ -209,6 +265,8 @@ export function WepayDashboard() {
         utils.finance.dashboard.invalidate(),
         utils.group.details.invalidate(),
         utils.group.list.invalidate(),
+        utils.finance.history.invalidate(),
+        utils.finance.report.invalidate(),
       ]);
       setExpenseForm({
         title: "",
@@ -233,6 +291,8 @@ export function WepayDashboard() {
       await Promise.all([
         utils.finance.dashboard.invalidate(),
         utils.group.list.invalidate(),
+        utils.finance.history.invalidate(),
+        utils.finance.report.invalidate(),
       ]);
       setFundAmount("");
       setFundNote("");
@@ -251,6 +311,8 @@ export function WepayDashboard() {
       await Promise.all([
         utils.finance.dashboard.invalidate(),
         utils.group.details.invalidate(),
+        utils.finance.history.invalidate(),
+        utils.finance.report.invalidate(),
       ]);
       setSettleForm((prev) => ({
         ...prev,
@@ -310,7 +372,6 @@ export function WepayDashboard() {
     setParticipants((prev) => (prev.length ? prev : members.map((m) => m.id)));
     setSettleForm((prev) => ({
       ...prev,
-      payerMemberId: prev.payerMemberId || members[0]!.id,
       receiverMemberId:
         prev.receiverMemberId || (members[1]?.id ?? members[0]!.id),
     }));
@@ -324,6 +385,7 @@ export function WepayDashboard() {
 
   useEffect(() => {
     setWorkspaceFeedback(null);
+    setDashboardTab("overview");
   }, [activeGroupId]);
 
   async function completeLogin(email: string, password: string) {
@@ -1007,516 +1069,756 @@ export function WepayDashboard() {
                 </div>
               </header>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <article className="rounded-[24px] border border-amber-200 bg-amber-50 p-4">
-                  <p className="text-xs font-semibold tracking-[0.18em] text-amber-900/70 uppercase">
-                    Wallet
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatMoney(
-                      dashboard.data.balances.walletBalance,
-                      currency,
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Shared cash available now
-                  </p>
-                </article>
-                <article className="rounded-[24px] border border-rose-200 bg-rose-50 p-4">
-                  <p className="text-xs font-semibold tracking-[0.18em] text-rose-900/70 uppercase">
-                    Unsettled
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatMoney(
-                      dashboard.data.balances.unsettledAmount,
-                      currency,
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Amount still owed between members
-                  </p>
-                </article>
-                <article className="rounded-[24px] border border-sky-200 bg-sky-50 p-4">
-                  <p className="text-xs font-semibold tracking-[0.18em] text-sky-900/70 uppercase">
-                    This week
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatMoney(
-                      dashboard.data.weeklySummary.totalSpent,
-                      currency,
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Latest weekly spending
-                  </p>
-                </article>
-                <article className="rounded-[24px] border border-emerald-200 bg-emerald-50 p-4">
-                  <p className="text-xs font-semibold tracking-[0.18em] text-emerald-900/70 uppercase">
-                    This month
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatMoney(
-                      dashboard.data.monthlySummary.totalSpent,
-                      currency,
-                    )}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Month-to-date group total
-                  </p>
-                </article>
+              <div className="mt-5 flex flex-wrap gap-2 rounded-2xl bg-slate-100 p-2">
+                {(
+                  [
+                    { key: "overview", label: "Overview" },
+                    { key: "records", label: "Records" },
+                    { key: "history", label: "History" },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setDashboardTab(tab.key)}
+                    className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                      dashboardTab === tab.key
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-600 hover:bg-white hover:text-slate-900"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
 
-              <div className="mt-5 grid gap-3 xl:grid-cols-3">
-                <form
-                  className="rounded-[28px] border border-slate-200 bg-white p-5"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (!myMember.data) return;
-
-                    const amount = Number(expenseForm.amount);
-                    if (!Number.isFinite(amount) || amount <= 0) {
-                      setWorkspaceFeedback({
-                        type: "error",
-                        message: "Enter a valid expense amount.",
-                      });
-                      return;
-                    }
-
-                    if (!participants.length) {
-                      setWorkspaceFeedback({
-                        type: "error",
-                        message:
-                          "Choose at least one participant for the expense.",
-                      });
-                      return;
-                    }
-
-                    addExpense.mutate({
-                      groupId: activeGroupId,
-                      title: expenseForm.title.trim(),
-                      amount,
-                      notes: expenseForm.notes.trim() || undefined,
-                      category: expenseForm.category,
-                      paymentSource: expenseForm.paymentSource,
-                      splitType: "EQUAL",
-                      paidByMemberId:
-                        expenseForm.paymentSource === "PERSONAL"
-                          ? myMember.data.memberId
-                          : undefined,
-                      participantIds: participants,
-                      createdByMemberId: myMember.data.memberId,
-                    });
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold">Add expense</h3>
-                      <p className="mt-1 text-sm text-slate-600">
-                        Record a new purchase and split it equally across
-                        selected members.
+              {dashboardTab === "overview" && (
+                <>
+                  <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <article className="rounded-[24px] border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.18em] text-amber-900/70 uppercase">
+                        Wallet
                       </p>
-                    </div>
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                      {activeGroup?.memberCount ?? members.length} members
-                    </span>
+                      <p className="mt-2 text-2xl font-semibold">
+                        {formatMoney(
+                          dashboard.data.balances.walletBalance,
+                          currency,
+                        )}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Shared cash available now
+                      </p>
+                    </article>
+                    <article className="rounded-[24px] border border-rose-200 bg-rose-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.18em] text-rose-900/70 uppercase">
+                        Unsettled
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold">
+                        {formatMoney(
+                          dashboard.data.balances.unsettledAmount,
+                          currency,
+                        )}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Amount still owed between members
+                      </p>
+                    </article>
+                    <article className="rounded-[24px] border border-sky-200 bg-sky-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.18em] text-sky-900/70 uppercase">
+                        This week
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold">
+                        {formatMoney(
+                          dashboard.data.weeklySummary.totalSpent,
+                          currency,
+                        )}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Latest weekly spending
+                      </p>
+                    </article>
+                    <article className="rounded-[24px] border border-emerald-200 bg-emerald-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.18em] text-emerald-900/70 uppercase">
+                        This month
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold">
+                        {formatMoney(
+                          dashboard.data.monthlySummary.totalSpent,
+                          currency,
+                        )}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Month-to-date group total
+                      </p>
+                    </article>
                   </div>
 
-                  <div className="mt-4 grid gap-3">
-                    <input
-                      placeholder="Dinner, rent, groceries..."
-                      value={expenseForm.title}
-                      onChange={(event) =>
-                        setExpenseForm((prev) => ({
-                          ...prev,
-                          title: event.target.value,
-                        }))
+                  <div className="mt-5 grid gap-3 xl:grid-cols-2">
+                    <section className="rounded-[28px] border border-slate-200 bg-white p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">Member balances</h3>
+                          <p className="mt-1 text-sm text-slate-600">
+                            Positive means member should receive. Negative means
+                            member owes.
+                          </p>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500">
+                          {members.length} people
+                        </span>
+                      </div>
+
+                      <div className="mt-4 space-y-2 text-sm">
+                        {dashboard.data.balances.memberBalances.map(
+                          (member) => (
+                            <div
+                              key={member.memberId}
+                              className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-700">
+                                  {member.name}
+                                </span>
+                                <span className="font-semibold">
+                                  {formatMoney(member.netBalance, currency)}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Paid personally:{" "}
+                                {formatMoney(member.personalPaid, currency)} |
+                                Wallet funded:{" "}
+                                {formatMoney(
+                                  member.walletExpensesFunded,
+                                  currency,
+                                )}{" "}
+                                | Settlements paid:{" "}
+                                {formatMoney(member.settlementsPaid, currency)}{" "}
+                                | Settlements received:{" "}
+                                {formatMoney(
+                                  member.settlementsReceived,
+                                  currency,
+                                )}
+                              </p>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="rounded-[28px] border border-slate-200 bg-white p-5">
+                      <h3 className="font-semibold">Suggested settlements</h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Suggested quickest payment path to clear balances.
+                      </p>
+
+                      <div className="mt-4 space-y-2 text-sm">
+                        {dashboard.data.suggestions.length === 0 && (
+                          <div className="rounded-2xl bg-slate-50 px-4 py-4 text-slate-600">
+                            No pending suggestions right now. Your group is
+                            balanced.
+                          </div>
+                        )}
+
+                        {dashboard.data.suggestions.map((suggestion, index) => (
+                          <div
+                            key={`${suggestion.fromMemberId}-${suggestion.toMemberId}-${index}`}
+                            className="rounded-2xl border border-slate-100 px-4 py-3"
+                          >
+                            <span className="font-semibold">
+                              {memberMap.get(suggestion.fromMemberId)}
+                            </span>{" "}
+                            pays{" "}
+                            <span className="font-semibold">
+                              {memberMap.get(suggestion.toMemberId)}
+                            </span>{" "}
+                            {formatMoney(suggestion.amount, currency)}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+                </>
+              )}
+
+              {dashboardTab === "records" && (
+                <div className="mt-5 grid gap-3 xl:grid-cols-3">
+                  <form
+                    className="rounded-[28px] border border-slate-200 bg-white p-5"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!myMember.data) return;
+
+                      const amount = Number(expenseForm.amount);
+                      if (!Number.isFinite(amount) || amount <= 0) {
+                        setWorkspaceFeedback({
+                          type: "error",
+                          message: "Enter a valid expense amount.",
+                        });
+                        return;
                       }
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                      required
-                    />
-                    <div className="grid grid-cols-2 gap-3">
+
+                      if (!participants.length) {
+                        setWorkspaceFeedback({
+                          type: "error",
+                          message:
+                            "Choose at least one participant for the expense.",
+                        });
+                        return;
+                      }
+
+                      addExpense.mutate({
+                        groupId: activeGroupId,
+                        title: expenseForm.title.trim(),
+                        amount,
+                        notes: expenseForm.notes.trim() || undefined,
+                        category: expenseForm.category,
+                        paymentSource: expenseForm.paymentSource,
+                        splitType: "EQUAL",
+                        paidByMemberId:
+                          expenseForm.paymentSource === "PERSONAL"
+                            ? myMember.data.memberId
+                            : undefined,
+                        participantIds: participants,
+                        createdByMemberId: myMember.data.memberId,
+                      });
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold">Add expense</h3>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Record a purchase and split equally across selected
+                          members.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                        {activeGroup?.memberCount ?? members.length} members
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <input
+                        placeholder="Dinner, rent, groceries..."
+                        value={expenseForm.title}
+                        onChange={(event) =>
+                          setExpenseForm((prev) => ({
+                            ...prev,
+                            title: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                        required
+                      />
+                      <div className="grid grid-cols-2 gap-3">
+                        <input
+                          placeholder="Amount"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={expenseForm.amount}
+                          onChange={(event) =>
+                            setExpenseForm((prev) => ({
+                              ...prev,
+                              amount: event.target.value,
+                            }))
+                          }
+                          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                          required
+                        />
+                        <select
+                          value={expenseForm.category}
+                          onChange={(event) =>
+                            setExpenseForm((prev) => ({
+                              ...prev,
+                              category: event.target.value as ExpenseCategory,
+                            }))
+                          }
+                          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                        >
+                          {expenseCategories.map((category) => (
+                            <option key={category} value={category}>
+                              {niceLabel(category)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <select
+                        value={expenseForm.paymentSource}
+                        onChange={(event) =>
+                          setExpenseForm((prev) => ({
+                            ...prev,
+                            paymentSource: event.target.value as
+                              | "PERSONAL"
+                              | "WALLET",
+                          }))
+                        }
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                      >
+                        <option value="PERSONAL">Paid personally</option>
+                        <option value="WALLET">Paid from shared wallet</option>
+                      </select>
+                      <textarea
+                        placeholder="Notes or context"
+                        value={expenseForm.notes}
+                        onChange={(event) =>
+                          setExpenseForm((prev) => ({
+                            ...prev,
+                            notes: event.target.value,
+                          }))
+                        }
+                        className="h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-semibold tracking-[0.2em] text-slate-500 uppercase">
+                          Participants
+                        </p>
+                        <div className="flex gap-2 text-xs font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setAllParticipants(true)}
+                            className="rounded-full bg-slate-100 px-3 py-1 text-slate-600 hover:bg-slate-200"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAllParticipants(false)}
+                            className="rounded-full bg-slate-100 px-3 py-1 text-slate-600 hover:bg-slate-200"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                        {members.map((member) => (
+                          <label
+                            key={member.id}
+                            className="flex items-center justify-between rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                          >
+                            <span className="font-medium text-slate-700">
+                              {member.name}
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={participants.includes(member.id)}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setParticipants((prev) =>
+                                  checked
+                                    ? [...prev, member.id]
+                                    : prev.filter((id) => id !== member.id),
+                                );
+                              }}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={addExpense.isPending || !myMember.data}
+                      className="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                    >
+                      {addExpense.isPending
+                        ? "Saving expense..."
+                        : "Add expense"}
+                    </button>
+                  </form>
+
+                  <form
+                    className="rounded-[28px] border border-slate-200 bg-white p-5"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!myMember.data) return;
+
+                      const amount = Number(fundAmount);
+                      if (!Number.isFinite(amount) || amount <= 0) {
+                        setWorkspaceFeedback({
+                          type: "error",
+                          message: "Enter a valid wallet contribution amount.",
+                        });
+                        return;
+                      }
+
+                      addFund.mutate({
+                        groupId: activeGroupId,
+                        memberId: myMember.data.memberId,
+                        amount,
+                        note: fundNote.trim() || undefined,
+                      });
+                    }}
+                  >
+                    <h3 className="font-semibold">Top up shared wallet</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Add money to the shared wallet for upcoming group
+                      expenses.
+                    </p>
+
+                    <div className="mt-4 space-y-3">
                       <input
                         placeholder="Amount"
                         type="number"
                         min="0"
                         step="0.01"
-                        value={expenseForm.amount}
+                        value={fundAmount}
+                        onChange={(event) => setFundAmount(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                        required
+                      />
+                      <input
+                        placeholder="Note (optional)"
+                        value={fundNote}
+                        onChange={(event) => setFundNote(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={addFund.isPending || !myMember.data}
+                      className="mt-4 w-full rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-amber-200"
+                    >
+                      {addFund.isPending
+                        ? "Updating wallet..."
+                        : "Add to wallet"}
+                    </button>
+                  </form>
+
+                  <form
+                    className="rounded-[28px] border border-slate-200 bg-white p-5"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!myMember.data) return;
+
+                      const amount = Number(settleForm.amount);
+
+                      if (!Number.isFinite(amount) || amount <= 0) {
+                        setWorkspaceFeedback({
+                          type: "error",
+                          message: "Enter a valid settlement amount.",
+                        });
+                        return;
+                      }
+
+                      if (
+                        !settleForm.receiverMemberId ||
+                        settleForm.receiverMemberId === myMember.data.memberId
+                      ) {
+                        setWorkspaceFeedback({
+                          type: "error",
+                          message:
+                            "Choose another member to receive this settlement.",
+                        });
+                        return;
+                      }
+
+                      addSettlement.mutate({
+                        groupId: activeGroupId,
+                        payerMemberId: myMember.data.memberId,
+                        receiverMemberId: settleForm.receiverMemberId,
+                        amount,
+                        note: settleForm.note.trim() || undefined,
+                      });
+                    }}
+                  >
+                    <h3 className="font-semibold">Record settlement</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Only your member account can be used as payer for this
+                      entry.
+                    </p>
+
+                    <p className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
+                      Paid by:{" "}
+                      <span className="font-semibold">
+                        {session.user.name ?? "You"}
+                      </span>
+                    </p>
+
+                    <div className="mt-4 space-y-3">
+                      <select
+                        value={settleForm.receiverMemberId}
                         onChange={(event) =>
-                          setExpenseForm((prev) => ({
+                          setSettleForm((prev) => ({
+                            ...prev,
+                            receiverMemberId: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                      >
+                        {members
+                          .filter(
+                            (member) => member.id !== myMember.data?.memberId,
+                          )
+                          .map((member) => (
+                            <option key={member.id} value={member.id}>
+                              Receiver: {member.name}
+                            </option>
+                          ))}
+                      </select>
+                      <input
+                        placeholder="Amount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={settleForm.amount}
+                        onChange={(event) =>
+                          setSettleForm((prev) => ({
                             ...prev,
                             amount: event.target.value,
                           }))
                         }
-                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
                         required
                       />
-                      <select
-                        value={expenseForm.category}
+                      <input
+                        placeholder="Note (optional)"
+                        value={settleForm.note}
                         onChange={(event) =>
-                          setExpenseForm((prev) => ({
+                          setSettleForm((prev) => ({
                             ...prev,
-                            category: event.target.value as ExpenseCategory,
+                            note: event.target.value,
                           }))
                         }
-                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                      >
-                        {expenseCategories.map((category) => (
-                          <option key={category} value={category}>
-                            {niceLabel(category)}
-                          </option>
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="mt-3 space-y-2 text-xs">
+                      {dashboard.data.suggestions
+                        .filter(
+                          (suggestion) =>
+                            suggestion.fromMemberId === myMember.data?.memberId,
+                        )
+                        .slice(0, 2)
+                        .map((suggestion, index) => (
+                          <button
+                            key={`${suggestion.toMemberId}-${index}`}
+                            type="button"
+                            onClick={() =>
+                              setSettleForm((prev) => ({
+                                ...prev,
+                                receiverMemberId: suggestion.toMemberId,
+                                amount: suggestion.amount.toFixed(2),
+                              }))
+                            }
+                            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-slate-700 hover:bg-slate-100"
+                          >
+                            Use suggestion: pay{" "}
+                            {memberMap.get(suggestion.toMemberId)}{" "}
+                            {formatMoney(suggestion.amount, currency)}
+                          </button>
                         ))}
-                      </select>
                     </div>
-                    <select
-                      value={expenseForm.paymentSource}
-                      onChange={(event) =>
-                        setExpenseForm((prev) => ({
-                          ...prev,
-                          paymentSource: event.target.value as
-                            | "PERSONAL"
-                            | "WALLET",
-                        }))
-                      }
-                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
+
+                    <button
+                      type="submit"
+                      disabled={addSettlement.isPending || !myMember.data}
+                      className="mt-4 w-full rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-emerald-200"
                     >
-                      <option value="PERSONAL">Paid personally</option>
-                      <option value="WALLET">Paid from shared wallet</option>
-                    </select>
-                    <textarea
-                      placeholder="Notes or context"
-                      value={expenseForm.notes}
-                      onChange={(event) =>
-                        setExpenseForm((prev) => ({
-                          ...prev,
-                          notes: event.target.value,
-                        }))
-                      }
-                      className="h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                    />
-                  </div>
+                      {addSettlement.isPending
+                        ? "Recording..."
+                        : "Record settlement"}
+                    </button>
+                  </form>
+                </div>
+              )}
 
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-semibold tracking-[0.2em] text-slate-500 uppercase">
-                        Participants
-                      </p>
-                      <div className="flex gap-2 text-xs font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => setAllParticipants(true)}
-                          className="rounded-full bg-slate-100 px-3 py-1 text-slate-600 hover:bg-slate-200"
-                        >
-                          Select all
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAllParticipants(false)}
-                          className="rounded-full bg-slate-100 px-3 py-1 text-slate-600 hover:bg-slate-200"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                    </div>
-                    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
-                      {members.map((member) => (
-                        <label
-                          key={member.id}
-                          className="flex items-center justify-between rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                        >
-                          <span className="font-medium text-slate-700">
-                            {member.name}
-                          </span>
-                          <input
-                            type="checkbox"
-                            checked={participants.includes(member.id)}
-                            onChange={(event) => {
-                              const checked = event.target.checked;
-                              setParticipants((prev) =>
-                                checked
-                                  ? [...prev, member.id]
-                                  : prev.filter((id) => id !== member.id),
-                              );
-                            }}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={addExpense.isPending || !myMember.data}
-                    className="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
-                  >
-                    {addExpense.isPending ? "Saving expense..." : "Add expense"}
-                  </button>
-                </form>
-
-                <form
-                  className="rounded-[28px] border border-slate-200 bg-white p-5"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (!myMember.data) return;
-
-                    const amount = Number(fundAmount);
-                    if (!Number.isFinite(amount) || amount <= 0) {
-                      setWorkspaceFeedback({
-                        type: "error",
-                        message: "Enter a valid wallet contribution amount.",
-                      });
-                      return;
-                    }
-
-                    addFund.mutate({
-                      groupId: activeGroupId,
-                      memberId: myMember.data.memberId,
-                      amount,
-                      note: fundNote.trim() || undefined,
-                    });
-                  }}
-                >
-                  <h3 className="font-semibold">Top up shared wallet</h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Add money to the group wallet so shared expenses can be paid
-                    from the pool.
-                  </p>
-
-                  <div className="mt-4 space-y-3">
-                    <input
-                      placeholder="Amount"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={fundAmount}
-                      onChange={(event) => setFundAmount(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                      required
-                    />
-                    <input
-                      placeholder="Note (optional)"
-                      value={fundNote}
-                      onChange={(event) => setFundNote(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={addFund.isPending || !myMember.data}
-                    className="mt-4 w-full rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-amber-200"
-                  >
-                    {addFund.isPending ? "Updating wallet..." : "Add to wallet"}
-                  </button>
-                </form>
-
-                <form
-                  className="rounded-[28px] border border-slate-200 bg-white p-5"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const amount = Number(settleForm.amount);
-
-                    if (!Number.isFinite(amount) || amount <= 0) {
-                      setWorkspaceFeedback({
-                        type: "error",
-                        message: "Enter a valid settlement amount.",
-                      });
-                      return;
-                    }
-
-                    if (
-                      settleForm.payerMemberId === settleForm.receiverMemberId
-                    ) {
-                      setWorkspaceFeedback({
-                        type: "error",
-                        message:
-                          "Choose two different members for a settlement.",
-                      });
-                      return;
-                    }
-
-                    addSettlement.mutate({
-                      groupId: activeGroupId,
-                      payerMemberId: settleForm.payerMemberId,
-                      receiverMemberId: settleForm.receiverMemberId,
-                      amount,
-                      note: settleForm.note.trim() || undefined,
-                    });
-                  }}
-                >
-                  <h3 className="font-semibold">Record settlement</h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Log a payment when one member settles up with another.
-                  </p>
-
-                  <div className="mt-4 space-y-3">
-                    <select
-                      value={settleForm.payerMemberId}
-                      onChange={(event) =>
-                        setSettleForm((prev) => ({
-                          ...prev,
-                          payerMemberId: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                    >
-                      {members.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          Payer: {member.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={settleForm.receiverMemberId}
-                      onChange={(event) =>
-                        setSettleForm((prev) => ({
-                          ...prev,
-                          receiverMemberId: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                    >
-                      {members.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          Receiver: {member.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      placeholder="Amount"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={settleForm.amount}
-                      onChange={(event) =>
-                        setSettleForm((prev) => ({
-                          ...prev,
-                          amount: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                      required
-                    />
-                    <input
-                      placeholder="Note (optional)"
-                      value={settleForm.note}
-                      onChange={(event) =>
-                        setSettleForm((prev) => ({
-                          ...prev,
-                          note: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm transition outline-none focus:border-slate-400 focus:bg-white"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={addSettlement.isPending}
-                    className="mt-4 w-full rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-emerald-200"
-                  >
-                    {addSettlement.isPending
-                      ? "Recording..."
-                      : "Record settlement"}
-                  </button>
-                </form>
-              </div>
-
-              <div className="mt-5 grid gap-3 xl:grid-cols-2">
-                <section className="rounded-[28px] border border-slate-200 bg-white p-5">
-                  <div className="flex items-center justify-between gap-3">
+              {dashboardTab === "history" && (
+                <section className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h3 className="font-semibold">Member balances</h3>
+                      <h3 className="font-semibold">History and reports</h3>
                       <p className="mt-1 text-sm text-slate-600">
-                        Positive numbers mean the member should receive money.
+                        Choose a weekly, monthly, or custom period to review
+                        activity.
                       </p>
                     </div>
-                    <span className="text-xs font-semibold text-slate-500">
-                      {members.length} people
-                    </span>
-                  </div>
 
-                  <div className="mt-4 space-y-2 text-sm">
-                    {dashboard.data.balances.memberBalances.map((member) => (
-                      <div
-                        key={member.memberId}
-                        className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setHistoryRange("week")}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                          historyRange === "week"
+                            ? "bg-slate-900 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
                       >
-                        <span className="font-medium text-slate-700">
-                          {member.name}
-                        </span>
-                        <span className="font-semibold">
-                          {formatMoney(member.netBalance, currency)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="rounded-[28px] border border-slate-200 bg-white p-5">
-                  <h3 className="font-semibold">Recent activity</h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    The latest actions across this workspace.
-                  </p>
-
-                  <div className="mt-4 max-h-[24rem] space-y-2 overflow-y-auto text-sm">
-                    {dashboard.data.recentActivity.length === 0 && (
-                      <div className="rounded-2xl bg-slate-50 px-4 py-4 text-slate-600">
-                        No activity yet. Add your first expense or wallet
-                        top-up.
-                      </div>
-                    )}
-
-                    {dashboard.data.recentActivity.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="rounded-2xl border border-slate-100 px-4 py-3"
+                        Weekly
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHistoryRange("month")}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                          historyRange === "month"
+                            ? "bg-slate-900 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
                       >
-                        <p className="leading-6 text-slate-700">
-                          <span className="font-semibold">
-                            {entry.actorMember?.name ?? "System"}
-                          </span>{" "}
-                          {entry.note ?? niceLabel(entry.type)}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {formatDate(entry.createdAt)}
-                        </p>
-                      </div>
-                    ))}
+                        Monthly
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHistoryRange("custom")}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold ${
+                          historyRange === "custom"
+                            ? "bg-slate-900 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        Custom
+                      </button>
+                    </div>
                   </div>
-                </section>
-              </div>
 
-              <section className="mt-5 rounded-[28px] border border-slate-200 bg-white p-5">
-                <h3 className="font-semibold">Suggested settlements</h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  A quick path to closing outstanding balances.
-                </p>
-
-                <div className="mt-4 space-y-2 text-sm">
-                  {dashboard.data.suggestions.length === 0 && (
-                    <div className="rounded-2xl bg-slate-50 px-4 py-4 text-slate-600">
-                      No pending suggestions right now. Your group is already
-                      looking balanced.
+                  {historyRange === "custom" && (
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <label className="text-sm text-slate-600">
+                        Start date
+                        <input
+                          type="date"
+                          value={historyStartDate}
+                          onChange={(event) =>
+                            setHistoryStartDate(event.target.value)
+                          }
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        End date
+                        <input
+                          type="date"
+                          value={historyEndDate}
+                          onChange={(event) =>
+                            setHistoryEndDate(event.target.value)
+                          }
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                        />
+                      </label>
                     </div>
                   )}
 
-                  {dashboard.data.suggestions.map((suggestion, index) => (
-                    <div
-                      key={`${suggestion.fromMemberId}-${suggestion.toMemberId}-${index}`}
-                      className="rounded-2xl border border-slate-100 px-4 py-3"
-                    >
-                      <span className="font-semibold">
-                        {memberMap.get(suggestion.fromMemberId)}
-                      </span>{" "}
-                      pays{" "}
-                      <span className="font-semibold">
-                        {memberMap.get(suggestion.toMemberId)}
-                      </span>{" "}
-                      {formatMoney(suggestion.amount, currency)}
-                    </div>
-                  ))}
-                </div>
-              </section>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                        Spent
+                      </p>
+                      <p className="mt-2 text-xl font-semibold">
+                        {formatMoney(
+                          reportQuery.data?.currentSummary.totalSpent ?? 0,
+                          currency,
+                        )}
+                      </p>
+                    </article>
+                    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                        Wallet used
+                      </p>
+                      <p className="mt-2 text-xl font-semibold">
+                        {formatMoney(
+                          reportQuery.data?.currentSummary.walletUsed ?? 0,
+                          currency,
+                        )}
+                      </p>
+                    </article>
+                    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                        Top-up
+                      </p>
+                      <p className="mt-2 text-xl font-semibold">
+                        {formatMoney(
+                          reportQuery.data?.currentSummary.walletTopUps ?? 0,
+                          currency,
+                        )}
+                      </p>
+                    </article>
+                    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                        Delta vs previous
+                      </p>
+                      <p className="mt-2 text-xl font-semibold">
+                        {formatMoney(
+                          reportQuery.data?.spendDelta ?? 0,
+                          currency,
+                        )}
+                      </p>
+                    </article>
+                  </div>
+
+                  <div className="mt-5 max-h-[32rem] space-y-2 overflow-y-auto">
+                    {historyQuery.isLoading && (
+                      <div className="rounded-2xl bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                        Loading filtered activity...
+                      </div>
+                    )}
+
+                    {!historyQuery.isLoading &&
+                      historyQuery.data?.rows.length === 0 && (
+                        <div className="rounded-2xl bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                          No records found for this period.
+                        </div>
+                      )}
+
+                    {historyQuery.data?.rows.map((entry) => {
+                      const details = entry.details as {
+                        title?: string | null;
+                        paymentSource?: string | null;
+                        category?: string | null;
+                        participantCount?: number | null;
+                        payerName?: string | null;
+                        receiverName?: string | null;
+                        walletType?: string | null;
+                        expenseTitle?: string | null;
+                      };
+
+                      return (
+                        <div
+                          key={entry.id}
+                          className="rounded-2xl border border-slate-100 px-4 py-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-slate-800">
+                              {entry.actorName} • {niceLabel(entry.type)}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {formatDate(entry.createdAt)}
+                            </p>
+                          </div>
+
+                          <p className="mt-1 text-sm text-slate-700">
+                            {entry.note ?? details.title ?? "No note"}
+                          </p>
+
+                          <p className="mt-1 text-xs text-slate-500">
+                            {entry.amount !== null
+                              ? `Amount: ${formatMoney(entry.amount, currency)} | `
+                              : ""}
+                            {details.payerName && details.receiverName
+                              ? `Settlement: ${details.payerName} paid ${details.receiverName}`
+                              : ""}
+                            {details.paymentSource
+                              ? `Payment source: ${niceLabel(details.paymentSource)} | `
+                              : ""}
+                            {details.category
+                              ? `Category: ${niceLabel(details.category)} | `
+                              : ""}
+                            {details.participantCount
+                              ? `Participants: ${details.participantCount}`
+                              : ""}
+                            {details.walletType
+                              ? `Wallet action: ${niceLabel(details.walletType)}${details.expenseTitle ? ` (${details.expenseTitle})` : ""}`
+                              : ""}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
             </>
           )}
         </section>

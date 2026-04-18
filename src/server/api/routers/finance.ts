@@ -270,7 +270,18 @@ export const financeRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
+      const currentMember = await requireGroupMembership(
+        ctx.db,
+        ctx.session.user.id,
+        input.groupId,
+      );
+
+      if (currentMember.id !== input.payerMemberId) {
+        throw new Error(
+          "You can only record settlement payments made by your own account.",
+        );
+      }
+
       if (input.payerMemberId === input.receiverMemberId) {
         throw new Error("Payer and receiver cannot be the same member.");
       }
@@ -419,6 +430,191 @@ export const financeRouter = createTRPCRouter({
         spendDelta,
         spendDeltaPct,
         unsettledAmount: balances.unsettledAmount,
+      };
+    }),
+
+  history: protectedProcedure
+    .input(
+      z.object({
+        groupId: z.string().cuid(),
+        range: z.enum(["week", "month", "custom"]).default("month"),
+        startDate: z.coerce.date().optional(),
+        endDate: z.coerce.date().optional(),
+        take: z.number().int().positive().max(300).default(120),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await requireGroupMembership(ctx.db, ctx.session.user.id, input.groupId);
+
+      const range = getDateRange(input.range, input.startDate, input.endDate);
+
+      const entries = await ctx.db.ledgerEntry.findMany({
+        where: {
+          groupId: input.groupId,
+          createdAt: {
+            gte: range.start,
+            lt: range.end,
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: input.take,
+        include: { actorMember: true },
+      });
+
+      const members = await ctx.db.groupMember.findMany({
+        where: { groupId: input.groupId },
+        select: { id: true, name: true },
+      });
+      const memberMap = new Map(
+        members.map((member) => [member.id, member.name]),
+      );
+
+      const expenseIds = entries
+        .filter(
+          (entry) =>
+            entry.referenceType === "expense" && Boolean(entry.referenceId),
+        )
+        .map((entry) => entry.referenceId!);
+      const settlementIds = entries
+        .filter(
+          (entry) =>
+            entry.referenceType === "settlement" && Boolean(entry.referenceId),
+        )
+        .map((entry) => entry.referenceId!);
+      const walletIds = entries
+        .filter(
+          (entry) =>
+            entry.referenceType === "wallet" && Boolean(entry.referenceId),
+        )
+        .map((entry) => entry.referenceId!);
+
+      const [expenses, settlements, walletEntries] = await Promise.all([
+        expenseIds.length
+          ? ctx.db.expense.findMany({
+              where: { id: { in: expenseIds } },
+              include: { participants: true, paidByMember: true },
+            })
+          : Promise.resolve([]),
+        settlementIds.length
+          ? ctx.db.settlement.findMany({
+              where: { id: { in: settlementIds } },
+              include: { payerMember: true, receiverMember: true },
+            })
+          : Promise.resolve([]),
+        walletIds.length
+          ? ctx.db.walletEntry.findMany({
+              where: { id: { in: walletIds } },
+              include: { member: true, expense: true },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      const expenseMap = new Map(
+        expenses.map((expense) => [expense.id, expense]),
+      );
+      const settlementMap = new Map(
+        settlements.map((settlement) => [settlement.id, settlement]),
+      );
+      const walletMap = new Map(
+        walletEntries.map((entry) => [entry.id, entry]),
+      );
+
+      const rows = entries.map((entry) => {
+        const amount = entry.amount?.toNumber() ?? null;
+
+        if (entry.referenceType === "expense" && entry.referenceId) {
+          const expense = expenseMap.get(entry.referenceId);
+          const participantCount = expense?.participants.length ?? 0;
+
+          return {
+            id: entry.id,
+            type: entry.type,
+            createdAt: entry.createdAt,
+            actorName: entry.actorMember?.name ?? "System",
+            amount,
+            note: entry.note,
+            details: {
+              title: expense?.title ?? entry.note ?? "Expense",
+              paymentSource: expense?.paymentSource ?? null,
+              category: expense?.category ?? null,
+              participantCount,
+              paidBy: expense?.paidByMember?.name ?? null,
+              expenseDate: expense?.date ?? null,
+            },
+          };
+        }
+
+        if (entry.referenceType === "settlement" && entry.referenceId) {
+          const settlement = settlementMap.get(entry.referenceId);
+          const payerName =
+            settlement?.payerMember?.name ?? entry.actorMember?.name;
+          const receiverName = settlement?.receiverMember?.name ?? null;
+
+          return {
+            id: entry.id,
+            type: entry.type,
+            createdAt: entry.createdAt,
+            actorName: entry.actorMember?.name ?? "System",
+            amount,
+            note: entry.note,
+            details: {
+              payerName,
+              receiverName,
+              settlementDate: settlement?.date ?? null,
+              settlementNote: settlement?.note ?? null,
+            },
+          };
+        }
+
+        if (entry.referenceType === "wallet" && entry.referenceId) {
+          const wallet = walletMap.get(entry.referenceId);
+          return {
+            id: entry.id,
+            type: entry.type,
+            createdAt: entry.createdAt,
+            actorName: entry.actorMember?.name ?? "System",
+            amount,
+            note: entry.note,
+            details: {
+              walletType: wallet?.type ?? null,
+              walletActor: wallet?.member?.name ?? null,
+              walletDate: wallet?.date ?? null,
+              walletNote: wallet?.note ?? null,
+              expenseTitle: wallet?.expense?.title ?? null,
+            },
+          };
+        }
+
+        return {
+          id: entry.id,
+          type: entry.type,
+          createdAt: entry.createdAt,
+          actorName: entry.actorMember?.name ?? "System",
+          amount,
+          note: entry.note,
+          details: {
+            metadata: entry.metadata,
+            receiverName:
+              typeof entry.metadata === "object" &&
+              entry.metadata &&
+              "receiverMemberId" in entry.metadata
+                ? (memberMap.get(
+                    String(
+                      (
+                        entry.metadata as {
+                          receiverMemberId?: string;
+                        }
+                      ).receiverMemberId,
+                    ),
+                  ) ?? null)
+                : null,
+          },
+        };
+      });
+
+      return {
+        range,
+        rows,
       };
     }),
 });

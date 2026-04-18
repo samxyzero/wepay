@@ -4,6 +4,7 @@ import { type Metadata } from "next";
 import { Sora, Space_Grotesk } from "next/font/google";
 
 import { AppProviders } from "~/app/providers";
+import { auth } from "~/server/auth";
 
 export const metadata: Metadata = {
   title: "Wepay Shared Wallet",
@@ -22,13 +23,15 @@ const spaceGrotesk = Space_Grotesk({
   variable: "--font-space-grotesk",
 });
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const session = await auth();
+
   return (
     <html lang="en" className={`${sora.variable} ${spaceGrotesk.variable}`}>
       <body>
-        <AppProviders>{children}</AppProviders>
+        <AppProviders session={session}>{children}</AppProviders>
       </body>
     </html>
   );

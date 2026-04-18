@@ -1,4 +1,4 @@
-import { WepayDashboard } from "~/app/_components/wepay-dashboard";
+import { WepayDashboard } from "./_components/wepay-dashboard";
 
 export default function Home() {
   return <WepayDashboard />;

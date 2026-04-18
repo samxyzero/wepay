@@ -45,7 +45,10 @@ export const authConfig = {
       authorize: async (credentials) => {
         const parsed = z
           .object({
-            email: z.string().email(),
+            email: z
+              .string()
+              .email()
+              .transform((value) => value.trim().toLowerCase()),
             password: z.string().min(8).max(128),
           })
           .safeParse(credentials);
@@ -53,7 +56,7 @@ export const authConfig = {
         if (!parsed.success) return null;
 
         const user = await db.user.findUnique({
-          where: { email: parsed.data.email.toLowerCase() },
+          where: { email: parsed.data.email },
         });
 
         if (!user?.passwordHash) return null;
@@ -83,12 +86,24 @@ export const authConfig = {
       : []),
   ],
   adapter: PrismaAdapter(db),
+  session: {
+    strategy: "jwt",
+  },
+  pages: {
+    signIn: "/",
+  },
   callbacks: {
-    session: ({ session, user }) => ({
+    jwt: ({ token, user }) => {
+      if (user) {
+        token.id = user.id;
+      }
+      return token;
+    },
+    session: ({ session, token, user }) => ({
       ...session,
       user: {
         ...session.user,
-        id: user.id,
+        id: user?.id ?? token.id ?? token.sub,
       },
     }),
   },

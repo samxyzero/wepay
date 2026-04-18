@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn, signOut, useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "~/trpc/react";
@@ -39,6 +40,7 @@ const groupTypes = [
 ] as const;
 
 export function WepayDashboard() {
+  const router = useRouter();
   const { data: session, status } = useSession();
   const isAuthed = status === "authenticated";
 
@@ -87,13 +89,16 @@ export function WepayDashboard() {
       const result = await signIn("credentials", {
         email: input.email,
         password: input.password,
+        callbackUrl: "/",
         redirect: false,
       });
-      if (result?.error) {
-        setAuthError(result.error);
+      if (result?.error || !result?.ok) {
+        setAuthError(result?.error ?? "Login failed.");
         return;
       }
       setAuthError(null);
+      router.push("/");
+      router.refresh();
       await utils.group.list.invalidate();
     },
     onError: (err) => setAuthError(err.message),
@@ -251,11 +256,15 @@ export function WepayDashboard() {
                 const result = await signIn("credentials", {
                   email: loginForm.email,
                   password: loginForm.password,
+                  callbackUrl: "/",
                   redirect: false,
                 });
-                if (result?.error) {
+                if (result?.error || !result?.ok) {
                   setAuthError("Invalid credentials.");
+                  return;
                 }
+                router.push("/");
+                router.refresh();
               }}
             >
               <input

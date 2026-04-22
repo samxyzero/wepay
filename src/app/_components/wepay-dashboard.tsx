@@ -77,6 +77,7 @@ type ExpenseCategory = (typeof expenseCategories)[number];
 type DashboardTab = "overview" | "records" | "history";
 type PeriodRange = "week" | "month" | "custom";
 type TransactionNature = "all" | "expense" | "settlement" | "wallet";
+type ThemeMode = "dark" | "light";
 
 function formatDateOnly(value: Date | string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -159,6 +160,10 @@ export function WepayDashboard() {
   const [fundAmount, setFundAmount] = useState("");
   const [fundNote, setFundNote] = useState("");
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>("overview");
+  const [themeMode, setThemeMode] = useState<ThemeMode>("dark");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [historyRange, setHistoryRange] = useState<PeriodRange>("month");
   const [historyNatureFilter, setHistoryNatureFilter] =
     useState<TransactionNature>("all");
@@ -379,6 +384,7 @@ export function WepayDashboard() {
     addExpense.isPending ||
     addFund.isPending ||
     addSettlement.isPending;
+  const sidebarExpanded = isMobileLayout || !sidebarCollapsed;
   const historyData = hasValidCustomRange ? historyQuery.data : undefined;
 
   const filteredExpenses = useMemo(() => {
@@ -583,6 +589,29 @@ export function WepayDashboard() {
   const recentWalletRecords = historyData?.walletEntries.slice(0, 4) ?? [];
 
   useEffect(() => {
+    const updateViewportState = () => {
+      const mobile = window.innerWidth < 1024;
+      setIsMobileLayout(mobile);
+      if (!mobile) setSidebarOpen(false);
+    };
+
+    const storedTheme = window.localStorage.getItem("wepay-theme");
+    if (storedTheme === "dark" || storedTheme === "light") {
+      setThemeMode(storedTheme);
+    }
+
+    updateViewportState();
+    window.addEventListener("resize", updateViewportState);
+
+    return () => window.removeEventListener("resize", updateViewportState);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem("wepay-theme", themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
     const error = searchParams.get("error");
     if (error) {
       setAuthFeedback({
@@ -620,7 +649,10 @@ export function WepayDashboard() {
     setDashboardTab("overview");
     setHistoryMemberFilter("all");
     setHistoryNatureFilter("all");
-  }, [activeGroupId]);
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
+  }, [activeGroupId, isMobileLayout]);
 
   useEffect(() => {
     if (
@@ -734,7 +766,10 @@ export function WepayDashboard() {
 
   if (status === "loading") {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#f9d8a8_0%,transparent_28%),radial-gradient(circle_at_top_right,#9edbd0_0%,transparent_24%),linear-gradient(135deg,#fff8ee_0%,#f6efe2_50%,#efe7d8_100%)] px-4 py-8 text-slate-900 md:px-8">
+      <main
+        data-theme={themeMode}
+        className="wepay-shell wepay-app-shell min-h-screen px-4 py-8 text-slate-900 md:px-8"
+      >
         <div className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center rounded-[32px] border border-slate-900/10 bg-white/80 p-10 text-center shadow-[0_30px_90px_-48px_rgba(15,23,42,0.5)] backdrop-blur">
           <div>
             <p className="text-xs font-semibold tracking-[0.28em] text-slate-500 uppercase">
@@ -752,7 +787,21 @@ export function WepayDashboard() {
 
   if (!session?.user) {
     return (
-      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#f4c88b_0%,transparent_28%),radial-gradient(circle_at_85%_8%,#8ed8c8_0%,transparent_22%),radial-gradient(circle_at_bottom_right,#f4a9a2_0%,transparent_20%),linear-gradient(135deg,#fff7eb_0%,#f7efdf_48%,#efe5d2_100%)] px-4 py-6 text-slate-900 md:px-8 lg:py-10">
+      <main
+        data-theme={themeMode}
+        className="wepay-shell wepay-app-shell min-h-screen px-4 py-6 text-slate-900 md:px-8 lg:py-10"
+      >
+        <div className="mx-auto mb-4 flex w-full max-w-6xl justify-end">
+          <button
+            type="button"
+            onClick={() =>
+              setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
+            }
+            className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            {themeMode === "dark" ? "Switch to light" : "Switch to dark"}
+          </button>
+        </div>
         <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[1.12fr_0.88fr]">
           <section className="relative overflow-hidden rounded-[32px] border border-slate-900/10 bg-[linear-gradient(155deg,rgba(255,255,255,0.96)_0%,rgba(255,247,235,0.94)_100%)] p-6 shadow-[0_30px_90px_-48px_rgba(15,23,42,0.45)] sm:p-8 lg:p-10">
             <div className="absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top,#ffffff_0%,transparent_72%)] opacity-70" />
@@ -1038,219 +1087,354 @@ export function WepayDashboard() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#f2d09d_0%,transparent_24%),radial-gradient(circle_at_top_right,#9cd5cc_0%,transparent_18%),linear-gradient(135deg,#f8f2e8_0%,#efe5d4_42%,#e5dac8_100%)] px-4 py-6 text-slate-900 md:px-8">
-      <div className="mx-auto grid w-full max-w-[96rem] gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <section className="rounded-[30px] border border-white/10 bg-slate-950 p-5 text-white shadow-[0_28px_90px_-50px_rgba(15,23,42,0.8)] lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)] lg:overflow-y-auto">
-          <div className="rounded-[26px] border border-white/10 bg-white/5 p-5 text-white">
-            <p className="text-xs font-semibold tracking-[0.24em] text-white/55 uppercase">
-              Signed in
-            </p>
-            <h1 className="font-heading mt-3 text-4xl">Wepay</h1>
-            <p className="mt-2 text-sm text-white/80">
-              {session.user.name ?? session.user.email}
-            </p>
-            <p className="mt-2 text-xs text-white/55">
-              Traditional group ledger with a clear sidebar, records, and
-              history.
-            </p>
+    <main
+      data-theme={themeMode}
+      className="wepay-shell wepay-app-shell min-h-screen px-3 py-4 text-slate-900 sm:px-4 md:px-6 md:py-6"
+    >
+      {isMobileLayout && sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-950/55 backdrop-blur-[2px] lg:hidden"
+        />
+      )}
+
+      <div className="mx-auto max-w-[96rem]">
+        <div className="wepay-main-panel mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border px-3 py-3 shadow-[0_20px_70px_-48px_rgba(15,23,42,0.55)] sm:px-4">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
-              onClick={() => signOut({ redirectTo: "/" })}
-              className="mt-4 rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
+              type="button"
+              onClick={() =>
+                isMobileLayout
+                  ? setSidebarOpen((prev) => !prev)
+                  : setSidebarCollapsed((prev) => !prev)
+              }
+              className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             >
-              Sign out
+              {isMobileLayout
+                ? sidebarOpen
+                  ? "Close"
+                  : "Menu"
+                : sidebarCollapsed
+                  ? "Expand"
+                  : "Collapse"}
             </button>
-          </div>
-
-          <div className="mt-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold tracking-[0.22em] text-white/45 uppercase">
-                  Your groups
-                </p>
-                <p className="mt-1 text-sm text-white/65">
-                  Switch between spaces or start a new one.
-                </p>
-              </div>
-              {groupsQuery.isFetching && (
-                <span className="text-xs font-semibold text-white/45">
-                  Refreshing...
-                </span>
-              )}
-            </div>
-
-            <FeedbackBanner feedback={workspaceFeedback} className="mt-4" />
-
-            <div className="mt-4 space-y-2">
-              {groupsQuery.isLoading && (
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-white/70">
-                  Loading your groups...
-                </div>
-              )}
-
-              {groupsQuery.error && (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
-                  {groupsQuery.error.message}
-                </div>
-              )}
-
-              {groupsQuery.data?.map((group) => (
-                <button
-                  key={group.id}
-                  onClick={() => setActiveGroupId(group.id)}
-                  className={`w-full rounded-[24px] border px-4 py-4 text-left transition ${
-                    activeGroupId === group.id
-                      ? "border-amber-300 bg-amber-100 text-slate-950 shadow-lg"
-                      : "border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold">{group.name}</p>
-                    <span className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-semibold tracking-[0.14em] text-current uppercase">
-                      {niceLabel(group.type)}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm opacity-80">
-                    {group.description ?? "No description yet"}
-                  </p>
-                  <div className="mt-3 flex items-center justify-between text-xs opacity-75">
-                    <span>{group.memberCount} members</span>
-                    <span>
-                      Wallet {formatMoney(group.walletBalance, group.currency)}
-                    </span>
-                  </div>
-                </button>
-              ))}
-
-              {!groupsQuery.isLoading &&
-                !groupsQuery.data?.length &&
-                !groupsQuery.error && (
-                  <div className="rounded-[24px] border border-dashed border-white/20 bg-white/5 px-4 py-5 text-sm text-white/70">
-                    You are not in a group yet. Create one below or join with a
-                    private code.
-                  </div>
-                )}
-            </div>
-          </div>
-
-          <div className="mt-6 rounded-[28px] border border-white/10 bg-white/5 p-4">
             <div>
-              <h2 className="text-sm font-semibold tracking-[0.2em] text-white/45 uppercase">
-                Create a group
-              </h2>
-              <p className="mt-1 text-sm text-white/65">
-                Set up a new private workspace for roommates, trips, or friends.
+              <p className="text-xs font-semibold tracking-[0.22em] text-slate-500 uppercase">
+                Wepay dashboard
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                Responsive workspace with a collapsible sidebar and theme toggle.
               </p>
             </div>
+          </div>
 
-            <form
-              className="mt-4 space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                createGroup.mutate({
-                  ...createGroupForm,
-                  description: createGroupForm.description.trim() || undefined,
-                });
-              }}
-            >
-              <input
-                placeholder="Group name"
-                value={createGroupForm.name}
-                onChange={(event) =>
-                  setCreateGroupForm((prev) => ({
-                    ...prev,
-                    name: event.target.value,
-                  }))
-                }
-                className="w-full rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-amber-300"
-                required
-              />
-              <textarea
-                placeholder="What is this group for?"
-                value={createGroupForm.description}
-                onChange={(event) =>
-                  setCreateGroupForm((prev) => ({
-                    ...prev,
-                    description: event.target.value,
-                  }))
-                }
-                className="h-24 w-full rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-amber-300"
-              />
-              <div className="grid grid-cols-2 gap-3">
-                <select
-                  value={createGroupForm.type}
-                  onChange={(event) =>
-                    setCreateGroupForm((prev) => ({
-                      ...prev,
-                      type: event.target.value as GroupType,
-                    }))
-                  }
-                  className="rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-amber-300"
+          <button
+            type="button"
+            onClick={() =>
+              setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
+            }
+            className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            {themeMode === "dark" ? "Switch to light" : "Switch to dark"}
+          </button>
+        </div>
+
+        <div
+          className={`grid gap-4 ${
+            sidebarExpanded
+              ? "lg:grid-cols-[320px_minmax(0,1fr)]"
+              : "lg:grid-cols-[96px_minmax(0,1fr)]"
+          }`}
+        >
+          <section
+            className={`wepay-sidebar wepay-scroll fixed inset-y-3 left-3 z-50 w-[min(86vw,320px)] rounded-[30px] border p-4 shadow-[0_28px_90px_-50px_rgba(15,23,42,0.8)] transition-transform duration-300 lg:sticky lg:top-6 lg:z-auto lg:h-[calc(100vh-3rem)] lg:w-auto lg:translate-x-0 ${
+              sidebarOpen || !isMobileLayout
+                ? "translate-x-0"
+                : "-translate-x-[calc(100%+1rem)]"
+            } ${sidebarExpanded ? "lg:p-5" : "lg:p-3"}`}
+          >
+            {sidebarExpanded ? (
+              <>
+                <div className="wepay-sidebar-surface rounded-[26px] border p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold tracking-[0.24em] text-white/55 uppercase">
+                        Signed in
+                      </p>
+                      <h1 className="font-heading mt-3 text-4xl">Wepay</h1>
+                    </div>
+                    {isMobileLayout && (
+                      <button
+                        type="button"
+                        onClick={() => setSidebarOpen(false)}
+                        className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/15"
+                      >
+                        Close
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-2 text-sm text-white/80">
+                    {session.user.name ?? session.user.email}
+                  </p>
+                  <p className="mt-2 text-xs text-white/55">
+                    Traditional group ledger with a clear sidebar, records, and
+                    history.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {!isMobileLayout && (
+                      <button
+                        type="button"
+                        onClick={() => setSidebarCollapsed(true)}
+                        className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
+                      >
+                        Collapse
+                      </button>
+                    )}
+                    <button
+                      onClick={() => signOut({ redirectTo: "/" })}
+                      className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold tracking-[0.22em] text-white/45 uppercase">
+                        Your groups
+                      </p>
+                      <p className="mt-1 text-sm text-white/65">
+                        Switch between spaces or start a new one.
+                      </p>
+                    </div>
+                    {groupsQuery.isFetching && (
+                      <span className="text-xs font-semibold text-white/45">
+                        Refreshing...
+                      </span>
+                    )}
+                  </div>
+
+                  <FeedbackBanner feedback={workspaceFeedback} className="mt-4" />
+
+                  <div className="wepay-scroll mt-4 max-h-[16rem] space-y-2 overflow-y-auto pr-1">
+                    {groupsQuery.isLoading && (
+                      <div className="wepay-sidebar-surface rounded-2xl border px-4 py-4 text-sm text-white/70">
+                        Loading your groups...
+                      </div>
+                    )}
+
+                    {groupsQuery.error && (
+                      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-700">
+                        {groupsQuery.error.message}
+                      </div>
+                    )}
+
+                    {groupsQuery.data?.map((group) => (
+                      <button
+                        key={group.id}
+                        onClick={() => {
+                          setActiveGroupId(group.id);
+                          if (isMobileLayout) setSidebarOpen(false);
+                        }}
+                        className={`w-full rounded-[24px] border px-4 py-4 text-left transition ${
+                          activeGroupId === group.id
+                            ? "border-amber-300 bg-amber-100 text-slate-950 shadow-lg"
+                            : "border-white/10 bg-white/5 text-white hover:border-white/20 hover:bg-white/10"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold">{group.name}</p>
+                          <span className="rounded-full bg-black/5 px-2.5 py-1 text-[11px] font-semibold tracking-[0.14em] text-current uppercase">
+                            {niceLabel(group.type)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm opacity-80">
+                          {group.description ?? "No description yet"}
+                        </p>
+                        <div className="mt-3 flex items-center justify-between text-xs opacity-75">
+                          <span>{group.memberCount} members</span>
+                          <span>
+                            Wallet {formatMoney(group.walletBalance, group.currency)}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+
+                    {!groupsQuery.isLoading &&
+                      !groupsQuery.data?.length &&
+                      !groupsQuery.error && (
+                        <div className="wepay-sidebar-surface rounded-[24px] border border-dashed px-4 py-5 text-sm text-white/70">
+                          You are not in a group yet. Create one below or join
+                          with a private code.
+                        </div>
+                      )}
+                  </div>
+                </div>
+
+                <div className="wepay-sidebar-surface mt-6 rounded-[28px] border p-4">
+                  <div>
+                    <h2 className="text-sm font-semibold tracking-[0.2em] text-white/45 uppercase">
+                      Create a group
+                    </h2>
+                    <p className="mt-1 text-sm text-white/65">
+                      Set up a new private workspace for roommates, trips, or
+                      friends.
+                    </p>
+                  </div>
+
+                  <form
+                    className="mt-4 space-y-3"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      createGroup.mutate({
+                        ...createGroupForm,
+                        description: createGroupForm.description.trim() || undefined,
+                      });
+                    }}
+                  >
+                    <input
+                      placeholder="Group name"
+                      value={createGroupForm.name}
+                      onChange={(event) =>
+                        setCreateGroupForm((prev) => ({
+                          ...prev,
+                          name: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-amber-300"
+                      required
+                    />
+                    <textarea
+                      placeholder="What is this group for?"
+                      value={createGroupForm.description}
+                      onChange={(event) =>
+                        setCreateGroupForm((prev) => ({
+                          ...prev,
+                          description: event.target.value,
+                        }))
+                      }
+                      className="h-24 w-full rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-amber-300"
+                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      <select
+                        value={createGroupForm.type}
+                        onChange={(event) =>
+                          setCreateGroupForm((prev) => ({
+                            ...prev,
+                            type: event.target.value as GroupType,
+                          }))
+                        }
+                        className="rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 transition outline-none focus:border-amber-300"
+                      >
+                        {groupTypes.map((type) => (
+                          <option key={type} value={type}>
+                            {niceLabel(type)}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        maxLength={3}
+                        value={createGroupForm.currency}
+                        onChange={(event) =>
+                          setCreateGroupForm((prev) => ({
+                            ...prev,
+                            currency: event.target.value.toUpperCase(),
+                          }))
+                        }
+                        placeholder="USD"
+                        className="rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 uppercase transition outline-none focus:border-amber-300"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={createGroup.isPending || isWorkspaceBusy}
+                      className="w-full rounded-2xl bg-amber-300 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-amber-100"
+                    >
+                      {createGroup.isPending
+                        ? "Creating..."
+                        : "Create private group"}
+                    </button>
+                  </form>
+                </div>
+
+                <div className="mt-4 rounded-[28px] border border-white/10 bg-white p-4 text-slate-900">
+                  <h3 className="text-sm font-semibold tracking-[0.2em] text-slate-500 uppercase">
+                    Join with a code
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Paste the 6-character invite code from your group owner.
+                  </p>
+                  <form
+                    className="mt-4 space-y-3"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      joinByCode.mutate({ code: joinCode.trim().toUpperCase() });
+                    }}
+                  >
+                    <input
+                      placeholder="ABC123"
+                      value={joinCode}
+                      onChange={(event) =>
+                        setJoinCode(event.target.value.toUpperCase())
+                      }
+                      maxLength={6}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm uppercase transition outline-none focus:border-slate-400 focus:bg-white"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      disabled={joinByCode.isPending || isWorkspaceBusy}
+                      className="w-full rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-amber-200"
+                    >
+                      {joinByCode.isPending ? "Joining..." : "Join group"}
+                    </button>
+                  </form>
+                </div>
+              </>
+            ) : (
+              <div className="flex h-full flex-col items-center gap-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed(false)}
+                  className="w-full rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/15"
                 >
-                  {groupTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {niceLabel(type)}
-                    </option>
+                  Open
+                </button>
+                <div className="wepay-sidebar-surface flex h-14 w-14 items-center justify-center rounded-[20px] border text-lg font-semibold">
+                  W
+                </div>
+                <div className="wepay-scroll flex w-full flex-1 flex-col gap-2 overflow-y-auto">
+                  {groupsQuery.data?.map((group) => (
+                    <button
+                      key={group.id}
+                      type="button"
+                      onClick={() => setActiveGroupId(group.id)}
+                      title={group.name}
+                      className={`flex h-12 w-full items-center justify-center rounded-2xl border text-sm font-semibold transition ${
+                        activeGroupId === group.id
+                          ? "border-amber-300 bg-amber-100 text-slate-950"
+                          : "border-white/10 bg-white/5 text-white hover:bg-white/10"
+                      }`}
+                    >
+                      {group.name.slice(0, 1).toUpperCase()}
+                    </button>
                   ))}
-                </select>
-                <input
-                  maxLength={3}
-                  value={createGroupForm.currency}
-                  onChange={(event) =>
-                    setCreateGroupForm((prev) => ({
-                      ...prev,
-                      currency: event.target.value.toUpperCase(),
-                    }))
-                  }
-                  placeholder="USD"
-                  className="rounded-2xl border border-white/10 bg-white/90 px-4 py-3 text-sm text-slate-900 uppercase transition outline-none focus:border-amber-300"
-                />
+                </div>
+                <button
+                  onClick={() => signOut({ redirectTo: "/" })}
+                  className="w-full rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/15"
+                >
+                  Sign out
+                </button>
               </div>
-              <button
-                type="submit"
-                disabled={createGroup.isPending || isWorkspaceBusy}
-                className="w-full rounded-2xl bg-amber-300 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-amber-100"
-              >
-                {createGroup.isPending ? "Creating..." : "Create private group"}
-              </button>
-            </form>
-          </div>
+            )}
+          </section>
 
-          <div className="mt-4 rounded-[28px] border border-white/10 bg-white p-4 text-slate-900">
-            <h3 className="text-sm font-semibold tracking-[0.2em] text-slate-500 uppercase">
-              Join with a code
-            </h3>
-            <p className="mt-1 text-sm text-slate-600">
-              Paste the 6-character invite code from your group owner.
-            </p>
-            <form
-              className="mt-4 space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                joinByCode.mutate({ code: joinCode.trim().toUpperCase() });
-              }}
-            >
-              <input
-                placeholder="ABC123"
-                value={joinCode}
-                onChange={(event) =>
-                  setJoinCode(event.target.value.toUpperCase())
-                }
-                maxLength={6}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm uppercase transition outline-none focus:border-slate-400 focus:bg-white"
-                required
-              />
-              <button
-                type="submit"
-                disabled={joinByCode.isPending || isWorkspaceBusy}
-                className="w-full rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-amber-200"
-              >
-                {joinByCode.isPending ? "Joining..." : "Join group"}
-              </button>
-            </form>
-          </div>
-        </section>
-
-        <section className="rounded-[32px] border border-slate-900/10 bg-[#fcfaf5]/90 p-5 shadow-[0_28px_90px_-50px_rgba(15,23,42,0.45)] backdrop-blur">
+          <section className="wepay-main-panel wepay-scroll rounded-[32px] border p-4 shadow-[0_28px_90px_-50px_rgba(15,23,42,0.45)] backdrop-blur sm:p-5">
           {!activeGroupId && (
             <div className="flex min-h-[60vh] items-center justify-center rounded-[28px] border border-dashed border-slate-300 bg-slate-50 px-6 text-center">
               <div>
@@ -1637,7 +1821,7 @@ export function WepayDashboard() {
                           </button>
                         </div>
                       </div>
-                      <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                      <div className="wepay-scroll mt-2 max-h-40 space-y-2 overflow-y-auto">
                         {members.map((member) => (
                           <label
                             key={member.id}
@@ -2259,7 +2443,7 @@ export function WepayDashboard() {
                         </span>
                       </div>
 
-                      <div className="mt-4 max-h-[52rem] space-y-3 overflow-y-auto pr-1">
+                      <div className="wepay-scroll mt-4 max-h-[52rem] space-y-3 overflow-y-auto pr-1">
                         {historyQuery.isLoading && hasValidCustomRange && (
                           <div className="rounded-2xl bg-white px-4 py-4 text-sm text-slate-600">
                             Loading filtered activity...
@@ -2571,9 +2755,11 @@ export function WepayDashboard() {
                     </div>
                   </div>
                 </section>
-              )}            </>
+              )}
+            </>
           )}
         </section>
+      </div>
       </div>
     </main>
   );

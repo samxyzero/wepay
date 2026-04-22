@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { requireGroupMembership } from "~/server/lib/group-access";
@@ -8,6 +9,7 @@ import {
   computeGroupBalances,
   getDateRange,
   getPreviousRange,
+  getWalletEntrySignedAmount,
 } from "~/server/lib/ledger";
 
 const splitTypeEnum = z.enum(["EQUAL", "CUSTOM"]);
@@ -287,6 +289,47 @@ export const financeRouter = createTRPCRouter({
       }
 
       const amount = round2(input.amount);
+
+      const balances = await computeGroupBalances(ctx.db, input.groupId);
+      const payer = balances.memberBalances.find(
+        (member) => member.memberId === input.payerMemberId,
+      );
+      const receiver = balances.memberBalances.find(
+        (member) => member.memberId === input.receiverMemberId,
+      );
+
+      if (!payer || !receiver) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Could not find both members for this settlement.",
+        });
+      }
+
+      if (payer.netBalance >= -0.009) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "You do not currently owe a settlement payment.",
+        });
+      }
+
+      if (receiver.netBalance <= 0.009) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${receiver.name} is not currently owed any money.`,
+        });
+      }
+
+      const maxSettlement = round2(
+        Math.min(Math.abs(payer.netBalance), receiver.netBalance),
+      );
+
+      if (amount - maxSettlement > 0.009) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `You can settle up to ${maxSettlement.toFixed(2)} with ${receiver.name} right now.`,
+        });
+      }
+
       return ctx.db.$transaction(async (tx) => {
         const settlement = await tx.settlement.create({
           data: {
@@ -448,173 +491,153 @@ export const financeRouter = createTRPCRouter({
 
       const range = getDateRange(input.range, input.startDate, input.endDate);
 
-      const entries = await ctx.db.ledgerEntry.findMany({
-        where: {
-          groupId: input.groupId,
-          createdAt: {
-            gte: range.start,
-            lt: range.end,
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        take: input.take,
-        include: { actorMember: true },
-      });
-
-      const members = await ctx.db.groupMember.findMany({
-        where: { groupId: input.groupId },
-        select: { id: true, name: true },
-      });
-      const memberMap = new Map(
-        members.map((member) => [member.id, member.name]),
-      );
-
-      const expenseIds = entries
-        .filter(
-          (entry) =>
-            entry.referenceType === "expense" && Boolean(entry.referenceId),
-        )
-        .map((entry) => entry.referenceId!);
-      const settlementIds = entries
-        .filter(
-          (entry) =>
-            entry.referenceType === "settlement" && Boolean(entry.referenceId),
-        )
-        .map((entry) => entry.referenceId!);
-      const walletIds = entries
-        .filter(
-          (entry) =>
-            entry.referenceType === "wallet" && Boolean(entry.referenceId),
-        )
-        .map((entry) => entry.referenceId!);
-
-      const [expenses, settlements, walletEntries] = await Promise.all([
-        expenseIds.length
-          ? ctx.db.expense.findMany({
-              where: { id: { in: expenseIds } },
-              include: { participants: true, paidByMember: true },
-            })
-          : Promise.resolve([]),
-        settlementIds.length
-          ? ctx.db.settlement.findMany({
-              where: { id: { in: settlementIds } },
-              include: { payerMember: true, receiverMember: true },
-            })
-          : Promise.resolve([]),
-        walletIds.length
-          ? ctx.db.walletEntry.findMany({
-              where: { id: { in: walletIds } },
-              include: { member: true, expense: true },
-            })
-          : Promise.resolve([]),
-      ]);
-
-      const expenseMap = new Map(
-        expenses.map((expense) => [expense.id, expense]),
-      );
-      const settlementMap = new Map(
-        settlements.map((settlement) => [settlement.id, settlement]),
-      );
-      const walletMap = new Map(
-        walletEntries.map((entry) => [entry.id, entry]),
-      );
-
-      const rows = entries.map((entry) => {
-        const amount = entry.amount?.toNumber() ?? null;
-
-        if (entry.referenceType === "expense" && entry.referenceId) {
-          const expense = expenseMap.get(entry.referenceId);
-          const participantCount = expense?.participants.length ?? 0;
-
-          return {
-            id: entry.id,
-            type: entry.type,
-            createdAt: entry.createdAt,
-            actorName: entry.actorMember?.name ?? "System",
-            amount,
-            note: entry.note,
-            details: {
-              title: expense?.title ?? entry.note ?? "Expense",
-              paymentSource: expense?.paymentSource ?? null,
-              category: expense?.category ?? null,
-              participantCount,
-              paidBy: expense?.paidByMember?.name ?? null,
-              expenseDate: expense?.date ?? null,
+      const [members, expenses, settlements, walletEntriesUntilEnd] =
+        await Promise.all([
+          ctx.db.groupMember.findMany({
+            where: { groupId: input.groupId },
+            orderBy: [{ role: "asc" }, { name: "asc" }],
+            select: { id: true, name: true, role: true },
+          }),
+          ctx.db.expense.findMany({
+            where: {
+              groupId: input.groupId,
+              date: { gte: range.start, lt: range.end },
             },
-          };
+            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+            take: input.take,
+            include: {
+              paidByMember: true,
+              createdByMember: true,
+              participants: {
+                include: { member: true },
+              },
+            },
+          }),
+          ctx.db.settlement.findMany({
+            where: {
+              groupId: input.groupId,
+              date: { gte: range.start, lt: range.end },
+            },
+            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+            take: input.take,
+            include: {
+              payerMember: true,
+              receiverMember: true,
+            },
+          }),
+          ctx.db.walletEntry.findMany({
+            where: {
+              groupId: input.groupId,
+              date: { lt: range.end },
+            },
+            orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+            include: {
+              member: true,
+              expense: {
+                include: {
+                  participants: {
+                    include: { member: true },
+                  },
+                },
+              },
+            },
+          }),
+        ]);
+
+      let runningWalletBalance = 0;
+      let openingWalletBalance = 0;
+      const walletRows: Array<{
+        id: string;
+        type: string;
+        date: Date;
+        amount: number;
+        signedAmount: number;
+        note: string | null;
+        memberId: string | null;
+        memberName: string | null;
+        expenseId: string | null;
+        expenseTitle: string | null;
+        participantIds: string[];
+        participants: Array<{
+          memberId: string;
+          name: string;
+          share: number;
+        }>;
+        balanceAfter: number;
+      }> = [];
+
+      for (const entry of walletEntriesUntilEnd) {
+        const amount = round2(entry.amount.toNumber());
+        const signedAmount = getWalletEntrySignedAmount(entry.type, amount);
+        runningWalletBalance = round2(runningWalletBalance + signedAmount);
+
+        if (entry.date < range.start) {
+          openingWalletBalance = runningWalletBalance;
+          continue;
         }
 
-        if (entry.referenceType === "settlement" && entry.referenceId) {
-          const settlement = settlementMap.get(entry.referenceId);
-          const payerName =
-            settlement?.payerMember?.name ?? entry.actorMember?.name;
-          const receiverName = settlement?.receiverMember?.name ?? null;
-
-          return {
-            id: entry.id,
-            type: entry.type,
-            createdAt: entry.createdAt,
-            actorName: entry.actorMember?.name ?? "System",
-            amount,
-            note: entry.note,
-            details: {
-              payerName,
-              receiverName,
-              settlementDate: settlement?.date ?? null,
-              settlementNote: settlement?.note ?? null,
-            },
-          };
-        }
-
-        if (entry.referenceType === "wallet" && entry.referenceId) {
-          const wallet = walletMap.get(entry.referenceId);
-          return {
-            id: entry.id,
-            type: entry.type,
-            createdAt: entry.createdAt,
-            actorName: entry.actorMember?.name ?? "System",
-            amount,
-            note: entry.note,
-            details: {
-              walletType: wallet?.type ?? null,
-              walletActor: wallet?.member?.name ?? null,
-              walletDate: wallet?.date ?? null,
-              walletNote: wallet?.note ?? null,
-              expenseTitle: wallet?.expense?.title ?? null,
-            },
-          };
-        }
-
-        return {
+        walletRows.push({
           id: entry.id,
           type: entry.type,
-          createdAt: entry.createdAt,
-          actorName: entry.actorMember?.name ?? "System",
+          date: entry.date,
           amount,
+          signedAmount,
           note: entry.note,
-          details: {
-            metadata: entry.metadata,
-            receiverName:
-              typeof entry.metadata === "object" &&
-              entry.metadata &&
-              "receiverMemberId" in entry.metadata
-                ? (memberMap.get(
-                    String(
-                      (
-                        entry.metadata as {
-                          receiverMemberId?: string;
-                        }
-                      ).receiverMemberId,
-                    ),
-                  ) ?? null)
-                : null,
-          },
-        };
-      });
+          memberId: entry.memberId,
+          memberName: entry.member?.name ?? null,
+          expenseId: entry.expenseId,
+          expenseTitle: entry.expense?.title ?? null,
+          participantIds:
+            entry.expense?.participants.map((participant) => participant.memberId) ??
+            [],
+          participants:
+            entry.expense?.participants.map((participant) => ({
+              memberId: participant.memberId,
+              name: participant.member.name,
+              share: round2(participant.share.toNumber()),
+            })) ?? [],
+          balanceAfter: runningWalletBalance,
+        });
+      }
 
       return {
         range,
-        rows,
+        members,
+        openingWalletBalance,
+        closingWalletBalance: runningWalletBalance,
+        expenses: expenses.map((expense) => ({
+          id: expense.id,
+          title: expense.title,
+          notes: expense.notes,
+          amount: round2(expense.amount.toNumber()),
+          date: expense.date,
+          category: expense.category,
+          paymentSource: expense.paymentSource,
+          splitType: expense.splitType,
+          paidByMemberId: expense.paidByMemberId,
+          paidByName: expense.paidByMember?.name ?? null,
+          createdByMemberId: expense.createdByMemberId,
+          createdByName: expense.createdByMember?.name ?? null,
+          participantIds: expense.participants.map(
+            (participant) => participant.memberId,
+          ),
+          participants: expense.participants.map((participant) => ({
+            memberId: participant.memberId,
+            name: participant.member.name,
+            share: round2(participant.share.toNumber()),
+          })),
+        })),
+        settlements: settlements.map((settlement) => ({
+          id: settlement.id,
+          amount: round2(settlement.amount.toNumber()),
+          date: settlement.date,
+          note: settlement.note,
+          payerMemberId: settlement.payerMemberId,
+          payerName: settlement.payerMember.name,
+          receiverMemberId: settlement.receiverMemberId,
+          receiverName: settlement.receiverMember.name,
+        })),
+        walletEntries: walletRows.reverse().slice(0, input.take),
       };
     }),
 });
